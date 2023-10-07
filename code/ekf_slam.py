@@ -6,6 +6,8 @@
 
 import numpy as np
 import re
+import matplotlib
+matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 np.set_printoptions(suppress=True, threshold=np.inf, linewidth=np.inf)
 
@@ -46,7 +48,8 @@ def draw_traj_and_pred(X, P):
     """
     draw_cov_ellipse(X[0:2], P[0:2, 0:2], 'm')
     plt.draw()
-    plt.waitforbuttonpress(0)
+    # plt.waitforbuttonpress(0)
+    plt.pause(0.1)
 
 
 def draw_traj_and_map(X, last_X, P, t):
@@ -76,7 +79,8 @@ def draw_traj_and_map(X, last_X, P, t):
                                               3 + 2 * k:3 + 2 * k + 2], 'g')
 
     plt.draw()
-    plt.waitforbuttonpress(0)
+    # plt.waitforbuttonpress(0)
+    plt.pause(0.1)
 
 
 def warp2pi(angle_rad):
@@ -86,6 +90,9 @@ def warp2pi(angle_rad):
     \param angle_rad Input angle in radius
     \return angle_rad_warped Warped angle to [-\pi, \pi].
     """
+    
+    angle_rad = np.mod(angle_rad + 3 * np.pi, 2 * np.pi) - np.pi
+    
     return angle_rad
 
 
@@ -106,6 +113,26 @@ def init_landmarks(init_measure, init_measure_cov, init_pose, init_pose_cov):
 
     landmark = np.zeros((2 * k, 1))
     landmark_cov = np.zeros((2 * k, 2 * k))
+    x = init_pose[0, 0]
+    y = init_pose[1, 0]
+    theta = init_pose[2, 0]
+    
+    for i in range(k):
+        beta = init_measure[2 * i, 0]
+        r = init_measure[2 * i + 1, 0]
+        
+        beta = warp2pi(beta + init_pose[2, 0])
+        landmark[2 * i, 0]     = x + r * np.cos(beta)
+        landmark[2 * i + 1, 0] = y + r * np.sin(beta)
+        H = np.array(
+            [
+                [-r * np.sin(beta + theta), np.cos(beta + theta)],
+                [r * np.cos(beta + theta), np.sin(beta + theta)]
+            ]
+        )
+        
+        landmark_cov[2 * i:2 * i + 2, 2 * i:2 * i + 2] = H @ init_measure_cov @ H.T
+    
 
     return k, landmark, landmark_cov
 
@@ -123,6 +150,34 @@ def predict(X, P, control, control_cov, k):
     \return P_pre Predicted P covariance of shape (3 + 2k, 3 + 2k).
     '''
 
+    d = control[0, 0]
+    alpha = control[1, 0]
+    theta = X[2, 0]
+    
+    X[0, 0] += d * np.cos(theta)
+    X[1, 0] += d * np.sin(theta)
+    X[2, 0] += (alpha)
+    X[2, 0] = warp2pi(X[2, 0])
+    
+    
+    G = np.eye((3 + 2 * k) )
+    G[:3, :3] = np.array([
+        [1, 0, -d * np.sin(theta)],
+        [0, 1, d * np.cos(theta)],
+        [0, 0, 1]
+    ])
+    
+    
+    R = np.zeros((3 + 2 * k, 3 + 2 * k))
+    Hr = np.array([
+        [np.cos(theta), -np.sin(theta), 0],
+        [np.sin(theta), np.cos(theta), 0],
+        [0, 0, 1]
+    ]) 
+    
+    # by moving through the environment, we do not update the covariance of the landmarks
+    R[:3, :3] = Hr @ control_cov @ Hr.T 
+    P = G @ P @ G.T + R
     return X, P
 
 
@@ -138,8 +193,40 @@ def update(X_pre, P_pre, measure, measure_cov, k):
     \return X Updated X state of shape (3 + 2k, 1).
     \return P Updated P covariance of shape (3 + 2k, 3 + 2k).
     '''
+    Ht = np.zeros((2 * k, 3 + 2 * k))
+    Qt = np.zeros((2 * k, 2 * k))
+    Hu = np.zeros((2 * k, 1))
+    X_u = X_pre.copy()
 
-    return X_pre, P_pre
+    for i in range(k):
+        delx = X_pre[3 + 2 * i, 0] - X_pre[0, 0]
+        dely = X_pre[3 + 2 * i + 1, 0] - X_pre[1, 0]
+        
+        q = delx**2 + dely**2
+        sq = np.sqrt(q)
+
+        Ht[i * 2: i * 2 + 2, :3] = np.array([
+            [dely / q, delx / q, -1],
+            [-delx / sq, -dely / sq, 0]
+        ])
+        
+        Ht[i * 2: i * 2 + 2, (3 + 2 * i): (3 + 2 * i) + 2] = np.array([
+            [-dely / q, -delx / q],
+            [delx / sq, dely / sq],
+        ])
+        Qt[i * 2: i * 2 + 2, i * 2: i * 2 + 2] = measure_cov
+        Hu[i * 2: i * 2 + 2, 0] = np.array([
+            warp2pi(np.arctan2(dely, delx) - X_pre[2, 0]),
+            sq,
+        ])        
+
+    K = P_pre @ Ht.T @ np.linalg.inv((Ht @ P_pre @ Ht.T) + Qt)
+    
+    X_u = X_pre + K @ (measure - Hu)
+    P_u = (np.eye(3 + 2 * k) - K @ Ht) @ P_pre
+    
+
+    return X_u, P_u
 
 
 def evaluate(X, P, k):
@@ -153,19 +240,36 @@ def evaluate(X, P, k):
     \return None
     '''
     l_true = np.array([3, 6, 3, 12, 7, 8, 7, 14, 11, 6, 11, 12], dtype=float)
+    dists = []
+    for i in range(k):
+        delx = l_true[2 * i] - X[3 + 2 * i]
+        dely = l_true[2 * i + 1] - X[3 + 2 * i + 1]
+        
+        edist = np.sqrt(delx**2 + dely**2).squeeze()
+        a = np.array([delx, dely]).T
+        mdist = np.sqrt(a @ np.linalg.inv(P[3 + 2 * i:3 + 2 * i + 2, 3 + 2 * i:3 + 2 * i + 2]) @ a.T)
+        mdist = mdist.squeeze()
+        
+        dists.append((edist, mdist))
+        print(f'Euclidean distance for landmark {i}: {edist}')
+        print(f"Mahalanobis distance for landmark {i}: {mdist}")
+        
     plt.scatter(l_true[0::2], l_true[1::2])
     plt.draw()
-    plt.waitforbuttonpress(0)
+    return dists
+    # plt.waitforbuttonpress(0)
+
+        
 
 
 def main():
     # TEST: Setup uncertainty parameters
-    sig_x = 0.25;
+    scale = 1
+    sig_x = 0.25 * scale;
     sig_y = 0.1;
-    sig_alpha = 0.1;
+    sig_alpha = 0.1 ;
     sig_beta = 0.01;
     sig_r = 0.08;
-
 
     # Generate variance from standard deviation
     sig_x2 = sig_x**2
@@ -175,7 +279,7 @@ def main():
     sig_r2 = sig_r**2
 
     # Open data file and read the initial measurements
-    data_file = open("../data/data.txt")
+    data_file = open("/home/praveenvnktsh/slam_a2/data/data.txt")
     line = data_file.readline()
     fields = re.split('[\t ]', line)[:-1]
     arr = np.array([float(field) for field in fields])
@@ -202,7 +306,7 @@ def main():
                   [np.zeros((2 * k, 3)), landmark_cov]])
 
     # Plot initial state and covariance
-    last_X = X
+    last_X = X.copy()
     draw_traj_and_map(X, last_X, P, 0)
 
     # Core loop: sequentially process controls and measurements
@@ -230,13 +334,22 @@ def main():
             ##########
             # TODO: update step in EKF SLAM
             X, P = update(X_pre, P_pre, measure, measure_cov, k)
-
             draw_traj_and_map(X, last_X, P, t)
-            last_X = X
+            last_X = X.copy()
             t += 1
 
     # EVAL: Plot ground truth landmarks and analyze distances
-    evaluate(X, P, k)
+    dists = evaluate(X, P, k)
+    
+    import os
+    params = f'{sig_x}_{sig_y}_{sig_alpha}_{sig_beta}_{sig_r}'
+    os.makedirs('results/' + params, exist_ok=True)
+    plt.savefig(f'results/{params}/plot.png')
+    with open(f'results/{params}/dists.txt', 'w') as f:
+        f.write(f'Euclidean distance, Mahalanobis distance\n')
+        for edist, mdist in dists:
+            f.write(f'{edist} {mdist}\n')
+    
 
 
 if __name__ == "__main__":
