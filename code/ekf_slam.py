@@ -254,7 +254,7 @@ def evaluate(X, P, k):
         print(f'Euclidean distance for landmark {i}: {edist}')
         print(f"Mahalanobis distance for landmark {i}: {mdist}")
         
-    plt.scatter(l_true[0::2], l_true[1::2])
+    plt.scatter(l_true[0::2], l_true[1::2], c = 'r')
     plt.draw()
     return dists
     # plt.waitforbuttonpress(0)
