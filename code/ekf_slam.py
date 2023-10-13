@@ -124,14 +124,14 @@ def init_landmarks(init_measure, init_measure_cov, init_pose, init_pose_cov):
         beta = warp2pi(beta + init_pose[2, 0])
         landmark[2 * i, 0]     = x + r * np.cos(beta)
         landmark[2 * i + 1, 0] = y + r * np.sin(beta)
-        H = np.array(
+        J = np.array(
             [
                 [-r * np.sin(beta + theta), np.cos(beta + theta)],
                 [r * np.cos(beta + theta), np.sin(beta + theta)]
             ]
         )
         
-        landmark_cov[2 * i:2 * i + 2, 2 * i:2 * i + 2] = H @ init_measure_cov @ H.T
+        landmark_cov[2 * i:2 * i + 2, 2 * i:2 * i + 2] = J @ init_measure_cov @ J.T
     
 
     return k, landmark, landmark_cov
@@ -206,12 +206,12 @@ def update(X_pre, P_pre, measure, measure_cov, k):
         sq = np.sqrt(q)
 
         Ht[i * 2: i * 2 + 2, :3] = np.array([
-            [dely / q, delx / q, -1],
+            [dely / q, -delx / q, -1],
             [-delx / sq, -dely / sq, 0]
         ])
         
         Ht[i * 2: i * 2 + 2, (3 + 2 * i): (3 + 2 * i) + 2] = np.array([
-            [-dely / q, -delx / q],
+            [-dely / q, delx / q],
             [delx / sq, dely / sq],
         ])
         Qt[i * 2: i * 2 + 2, i * 2: i * 2 + 2] = measure_cov
@@ -264,92 +264,99 @@ def evaluate(X, P, k):
 
 def main():
     # TEST: Setup uncertainty parameters
-    scale = 1
-    sig_x = 0.25 * scale;
-    sig_y = 0.1;
-    sig_alpha = 0.1 ;
-    sig_beta = 0.01;
-    sig_r = 0.08;
 
-    # Generate variance from standard deviation
-    sig_x2 = sig_x**2
-    sig_y2 = sig_y**2
-    sig_alpha2 = sig_alpha**2
-    sig_beta2 = sig_beta**2
-    sig_r2 = sig_r**2
+    for scale in [1, 0.1, 10]:
+        for i in range(5):
+            if i == 1 and scale == 1:
+                break
+            kernel = [1, 1, 1, 1, 1]
+            kernel[i] = scale
+            sig_x = 0.25 * kernel[0]
+            sig_y = 0.1 * kernel[1]
+            sig_alpha = 0.1  * kernel[2]
+            sig_beta = 0.01* kernel[3]
+            sig_r = 0.08 * kernel[4]
+            
+            # Generate variance from standard deviation
+            sig_x2 = sig_x**2
+            sig_y2 = sig_y**2
+            sig_alpha2 = sig_alpha**2
+            sig_beta2 = sig_beta**2
+            sig_r2 = sig_r**2
 
-    # Open data file and read the initial measurements
-    data_file = open("/home/praveenvnktsh/slam_a2/data/data.txt")
-    line = data_file.readline()
-    fields = re.split('[\t ]', line)[:-1]
-    arr = np.array([float(field) for field in fields])
-    measure = np.expand_dims(arr, axis=1)
-    t = 1
-
-    # Setup control and measurement covariance
-    control_cov = np.diag([sig_x2, sig_y2, sig_alpha2])
-    measure_cov = np.diag([sig_beta2, sig_r2])
-
-    # Setup the initial pose vector and pose uncertainty
-    pose = np.zeros((3, 1))
-    pose_cov = np.diag([0.02**2, 0.02**2, 0.1**2])
-
-    ##########
-    # TODO: initialize landmarks
-    k, landmark, landmark_cov = init_landmarks(measure, measure_cov, pose,
-                                               pose_cov)
-
-    # Setup state vector X by stacking pose and landmark states
-    # Setup covariance matrix P by expanding pose and landmark covariances
-    X = np.vstack((pose, landmark))
-    P = np.block([[pose_cov, np.zeros((3, 2 * k))],
-                  [np.zeros((2 * k, 3)), landmark_cov]])
-
-    # Plot initial state and covariance
-    last_X = X.copy()
-    draw_traj_and_map(X, last_X, P, 0)
-
-    # Core loop: sequentially process controls and measurements
-    for line in data_file:
-        fields = re.split('[\t ]', line)[:-1]
-        arr = np.array([float(field) for field in fields])
-
-        # Control
-        if arr.shape[0] == 2:
-            print(f'{t}: Predict step')
-            d, alpha = arr[0], arr[1]
-            control = np.array([[d], [alpha]])
-
-            ##########
-            # TODO: predict step in EKF SLAM
-            X_pre, P_pre = predict(X, P, control, control_cov, k)
-
-            draw_traj_and_pred(X_pre, P_pre)
-
-        # Measurement
-        else:
-            print(f'{t}: Update step')
+            # Open data file and read the initial measurements
+            data_file = open("/home/praveenvnktsh/slam_a2/data/data.txt")
+            line = data_file.readline()
+            fields = re.split('[\t ]', line)[:-1]
+            arr = np.array([float(field) for field in fields])
             measure = np.expand_dims(arr, axis=1)
+            t = 1
+
+            # Setup control and measurement covariance
+            control_cov = np.diag([sig_x2, sig_y2, sig_alpha2])
+            measure_cov = np.diag([sig_beta2, sig_r2])
+
+            # Setup the initial pose vector and pose uncertainty
+            pose = np.zeros((3, 1))
+            pose_cov = np.diag([0.02**2, 0.02**2, 0.1**2])
 
             ##########
-            # TODO: update step in EKF SLAM
-            X, P = update(X_pre, P_pre, measure, measure_cov, k)
-            draw_traj_and_map(X, last_X, P, t)
-            last_X = X.copy()
-            t += 1
+            # TODO: initialize landmarks
+            k, landmark, landmark_cov = init_landmarks(measure, measure_cov, pose,
+                                                    pose_cov)
 
-    # EVAL: Plot ground truth landmarks and analyze distances
-    dists = evaluate(X, P, k)
-    
-    import os
-    params = f'{sig_x}_{sig_y}_{sig_alpha}_{sig_beta}_{sig_r}'
-    os.makedirs('results/' + params, exist_ok=True)
-    plt.savefig(f'results/{params}/plot.png')
-    with open(f'results/{params}/dists.txt', 'w') as f:
-        f.write(f'Euclidean distance, Mahalanobis distance\n')
-        for edist, mdist in dists:
-            f.write(f'{edist} {mdist}\n')
-    
+            # Setup state vector X by stacking pose and landmark states
+            # Setup covariance matrix P by expanding pose and landmark covariances
+            X = np.vstack((pose, landmark))
+            P = np.block([[pose_cov, np.zeros((3, 2 * k))],
+                        [np.zeros((2 * k, 3)), landmark_cov]])
+
+            # Plot initial state and covariance
+            last_X = X.copy()
+            draw_traj_and_map(X, last_X, P, 0)
+
+            # Core loop: sequentially process controls and measurements
+            for line in data_file:
+                fields = re.split('[\t ]', line)[:-1]
+                arr = np.array([float(field) for field in fields])
+
+                # Control
+                if arr.shape[0] == 2:
+                    print(f'{t}: Predict step')
+                    d, alpha = arr[0], arr[1]
+                    control = np.array([[d], [alpha]])
+
+                    ##########
+                    # TODO: predict step in EKF SLAM
+                    X_pre, P_pre = predict(X, P, control, control_cov, k)
+
+                    draw_traj_and_pred(X_pre, P_pre)
+
+                # Measurement
+                else:
+                    print(f'{t}: Update step')
+                    measure = np.expand_dims(arr, axis=1)
+
+                    ##########
+                    # TODO: update step in EKF SLAM
+                    X, P = update(X_pre, P_pre, measure, measure_cov, k)
+                    draw_traj_and_map(X, last_X, P, t)
+                    last_X = X.copy()
+                    t += 1
+
+            # EVAL: Plot ground truth landmarks and analyze distances
+            dists = evaluate(X, P, k)
+            
+            import os
+            params = f'{round(sig_x, 3)}_{round(sig_y, 3)}_{round(sig_alpha, 3)}_{round(sig_beta, 3)}_{round(sig_r, 3)}'
+            os.makedirs('results/' + params, exist_ok=True)
+            plt.savefig(f'results/{params}/plot.png')
+            with open(f'results/{params}/dists.txt', 'w') as f:
+                f.write(f'| Euclidean distance | Mahalanobis distance |\n')
+                f.write(f'| --- | --- |\n')
+                for edist, mdist in dists:
+                    f.write(f'| {edist} | {mdist} | \n')
+            plt.cla()
 
 
 if __name__ == "__main__":
