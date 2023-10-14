@@ -42,9 +42,9 @@ Thr Mahalanobis distance is also extremely small, meaning that the belief of the
 #### Part 1
 
 The zero-terms in the initial covariance matrix becomes non-zero later on because:
-- As the robot moves through the environment, we accumulate information about the landmarks viewed from different robot poses. Thus, updating information about the landmarks viewed from different poses can lead to uncertainties being introduced in new dimensions in the local coordinate frame of the new robot pose. This can lead to non-zero covariances 
+- As the robot moves through the environment, we accumulate information about the landmarks viewed from different robot poses. Thus, updating information about the landmarks viewed from different poses can lead to uncertainties being introduced in new dimensions in the local coordinate frame of the new robot pose. Since we frame the observation of the robot w.r.t robot pose, new robot poses add uncertainty in new directions, leading to non zero values for values initialized with 0 covariances. 
 
-The assumption that we made was that the landmarks are independent of each other. This is not an accurate assumption since a varied belief in one landmark means that the belief of the other landmark should also change. This is because there is a fixed spatial separation of the landmarks in the real world.
+The assumption that we made was that the landmarks are independent of each other. This is not an accurate assumption since a var    ied belief in one landmark means that the belief of the other landmark should also change. This is because there is a fixed spatial separation of the landmarks in the real world.
 
 
 #### Part 2
@@ -83,7 +83,7 @@ By increasing the variance in $\beta$, we notice that we are much more uncertain
 | --- | --- | -- | 
 | ![](code/results/0.25_0.1_0.1_0.01_0.8/plot.png) | ![](code/results/0.25_0.1_0.1_0.01_0.008/plot.png) |![](code/results/0.25_0.1_0.1_0.01_0.08/plot.png) | 
 
-By increasing the variance in $\r$, we notice that we are much more uncertain about the exact distance of the landmark with respect to the robot. We can see that the Gaussian distributions have a dominant axis along the direction of the line connecting the robot and the landmark, meaning that the uncertainty in the range measurement is much more than the uncertainty in the heading measurement. We notice the opposite effect when we scale the variance down.
+By increasing the variance in $r$, we notice that we are much more uncertain about the exact distance of the landmark with respect to the robot. We can see that the Gaussian distributions have a dominant axis along the direction of the line connecting the robot and the landmark, meaning that the uncertainty in the range measurement is much more than the uncertainty in the heading measurement. We notice the opposite effect when we scale the variance down.
 
 
 #### Part 3
